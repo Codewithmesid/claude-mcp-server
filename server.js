@@ -22,50 +22,71 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 const KB = JSON.parse(readFileSync(join(__dirname, "knowledge.json"), "utf-8"));
 
-// Build compact profile for system prompt (~2KB)
-const PROFILE_CONTEXT = `You are Claude, acting as an AI assistant for ${KB.profile.name} (${KB.profile.name_ru}), ${KB.profile.role} of ${KB.profile.company}.
+// Department list for validation
+const DEPT_IDS = Object.keys(KB.departments);
+const DEPT_NAMES = Object.fromEntries(
+  Object.entries(KB.departments).map(([id, d]) => [id, d.name])
+);
 
-KEY CONTEXT:
-- Company: ${KB.profile.company_description}
-- HQ: ${KB.profile.hq}
-- Co-founder: ${KB.profile.co_founder}
-- Background: ${KB.profile.background}
-- Languages: ${KB.profile.languages}
-- Locations: ${KB.profile.locations}
-- Commercial terms: ${KB.profile.commercial_terms}
-- Dubai entity: ${KB.profile.dubai_entity}
-- Group structure: ${Object.values(KB.group_structure).join("; ")}
+// Build compact system prompt
+const PROFILE_CONTEXT = `You are Claude, acting as the AI backbone for The Secretary — the intelligent assistant managing all departments for Spartan (${KB.profile.name}, ${KB.profile.role} of ${KB.profile.company}).
 
-You have access to Roman's business knowledge base covering: ${Object.keys(KB.topics).join(", ")}. When answering, draw on this context to give informed, specific responses that reflect understanding of MetalMarket's business.`;
+HIERARCHY:
+- Spartan (CEO): ${KB.hierarchy.spartan.name} — overall boss
+- The Secretary: manages all 8 departments, routes queries, retrieves documents
 
-// Build keyword index for search
+DEPARTMENTS:
+${DEPT_IDS.map(id => `- ${KB.departments[id].name}: ${KB.departments[id].scope}`).join("\n")}
+
+COMPANY: ${KB.profile.company_description}
+HQ: ${KB.profile.hq}
+Co-founder: ${KB.profile.co_founder}
+Commercial terms: ${KB.profile.commercial_terms}
+Group: ${Object.values(KB.group_structure).join("; ")}
+
+When answering, identify which department(s) a query belongs to and draw on the relevant knowledge. The Analytics Department has cross-department access to all files.`;
+
+// ── Search engine ───────────────────────────────────────────────
+
+// Flatten all topics across departments into a searchable index
 function buildIndex() {
   const index = [];
-  for (const [topicId, topic] of Object.entries(KB.topics)) {
-    index.push({
-      id: topicId,
-      keywords: topic.keywords.map(k => k.toLowerCase()),
-      summary: topic.summary,
-      details: topic.details || null,
-    });
+  for (const [deptId, dept] of Object.entries(KB.departments)) {
+    for (const [topicId, topic] of Object.entries(dept.topics)) {
+      index.push({
+        department: deptId,
+        departmentName: dept.name,
+        topicId,
+        keywords: topic.keywords.map(k => k.toLowerCase()),
+        summary: topic.summary,
+        details: topic.details || null,
+      });
+    }
   }
   return index;
 }
 const TOPIC_INDEX = buildIndex();
 
-// Search knowledge by query string — returns matching topic summaries
-function searchKnowledge(query, maxResults = 5) {
+// Search by query, optionally filtered to a department
+function searchKnowledge(query, department = null, maxResults = 5) {
   const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-  const scored = TOPIC_INDEX.map(topic => {
+
+  let candidates = TOPIC_INDEX;
+  if (department) {
+    // Allow matching by id or name
+    const deptLower = department.toLowerCase();
+    candidates = TOPIC_INDEX.filter(t =>
+      t.department === deptLower ||
+      t.departmentName.toLowerCase().includes(deptLower)
+    );
+  }
+
+  const scored = candidates.map(topic => {
     let score = 0;
     for (const term of terms) {
-      // Exact keyword match = 10 points
       if (topic.keywords.some(k => k === term)) score += 10;
-      // Partial keyword match = 5 points
       else if (topic.keywords.some(k => k.includes(term) || term.includes(k))) score += 5;
-      // Summary mention = 2 points
       else if (topic.summary.toLowerCase().includes(term)) score += 2;
-      // Details mention = 1 point
       else if (topic.details && topic.details.toLowerCase().includes(term)) score += 1;
     }
     return { ...topic, score };
@@ -77,17 +98,15 @@ function searchKnowledge(query, maxResults = 5) {
   return scored;
 }
 
-// Format search results as readable text
 function formatResults(results) {
   if (results.length === 0) return "No matching topics found in the knowledge base.";
   return results.map(r => {
-    let text = `## ${r.id.replace(/_/g, " ").toUpperCase()} (relevance: ${r.score})\n${r.summary}`;
+    let text = `## ${r.topicId.replace(/_/g, " ").toUpperCase()}\n**Department:** ${r.departmentName} | **Relevance:** ${r.score}\n\n${r.summary}`;
     if (r.details) text += `\n\nDetails: ${r.details}`;
     return text;
   }).join("\n\n---\n\n");
 }
 
-// Format people info
 function formatPeople(query) {
   const terms = query.toLowerCase().split(/\s+/);
   const matches = Object.entries(KB.people).filter(([key, person]) => {
@@ -96,38 +115,38 @@ function formatPeople(query) {
   });
   if (matches.length === 0) return null;
   return matches.map(([, p]) =>
-    `**${p.name}**${p.aliases ? ` (aka ${p.aliases.join(", ")})` : ""}: ${p.role || p.relation || ""}`
+    `**${p.name}**${p.aliases ? ` (aka ${p.aliases.join(", ")})` : ""}: ${p.role || p.relation || ""} [${DEPT_NAMES[p.department] || ""}]`
   ).join("\n");
 }
 
 // ── Anthropic client ────────────────────────────────────────────
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
-// ── Build an MCP server instance ────────────────────────────────
+// ── MCP server ──────────────────────────────────────────────────
 function createServer() {
   const server = new McpServer({
     name: "claude-assistant",
-    version: "2.0.0",
+    version: "3.0.0",
   });
 
-  // Tool 1: General-purpose Claude (now with business context)
+  // ─── Tool 1: ask_claude (with department-aware context) ───────
   server.tool(
     "ask_claude",
-    "Send a question or task to Claude AI and get a detailed response. " +
-    "Claude knows Roman's business context — MetalMarket, deals, contacts, pipelines. " +
-    "Use for analysis, writing, research, summarisation, translation, or any task.",
+    "Send a question or task to Claude AI. Claude knows Spartan's full business context " +
+    "organized by department (Finance, Electronics, Chemicals, Health, Accounts, R&D, IT, Analytics). " +
+    "Relevant context is auto-injected. Use for analysis, writing, research, or any task.",
     {
-      prompt:  z.string().describe("The question or task for Claude"),
-      context: z.string().optional().describe("Optional additional context"),
+      prompt:     z.string().describe("The question or task for Claude"),
+      department: z.string().optional().describe("Route to a specific department: finance, electronics, chemicals, health, accounts, rd, it, analytics"),
+      context:    z.string().optional().describe("Optional additional context"),
     },
-    async ({ prompt, context }) => {
-      // Auto-search knowledge base for relevant context
-      const kbResults = searchKnowledge(prompt, 3);
+    async ({ prompt, department, context }) => {
+      const kbResults = searchKnowledge(prompt, department, 4);
       const peopleResults = formatPeople(prompt);
 
       let systemMsg = PROFILE_CONTEXT;
       if (kbResults.length > 0) {
-        systemMsg += `\n\nRELEVANT BUSINESS CONTEXT:\n${formatResults(kbResults)}`;
+        systemMsg += `\n\nRELEVANT CONTEXT FROM DEPARTMENTS:\n${formatResults(kbResults)}`;
       }
       if (peopleResults) {
         systemMsg += `\n\nRELEVANT PEOPLE:\n${peopleResults}`;
@@ -152,24 +171,23 @@ function createServer() {
     }
   );
 
-  // Tool 2: Coding assistant (with company context)
+  // ─── Tool 2: code_with_claude ─────────────────────────────────
   server.tool(
     "code_with_claude",
-    "Send a coding task to Claude Code. Claude will write, review, refactor, " +
-    "or debug code and return the complete solution with explanations.",
+    "Send a coding task to Claude Code — IT Department. " +
+    "Writes, reviews, refactors, or debugs code with complete solutions.",
     {
       task:          z.string().describe("What code to write, fix, or review"),
-      language:      z.string().optional().describe("Programming language (python, javascript, etc.)"),
-      existing_code: z.string().optional().describe("Existing code to modify or build upon"),
-      file_name:     z.string().optional().describe("Target file name for the output"),
+      language:      z.string().optional().describe("Programming language"),
+      existing_code: z.string().optional().describe("Existing code to modify"),
+      file_name:     z.string().optional().describe("Target file name"),
     },
     async ({ task, language, existing_code, file_name }) => {
       const sys =
-        `You are Claude Code, an expert software engineer working for ${KB.profile.company}. ` +
-        "Write clean, production-ready, well-documented code. " +
-        "Always provide complete, working code — no placeholder TODOs. " +
+        `You are Claude Code, expert software engineer for ${KB.profile.company} (IT Department). ` +
+        "Write clean, production-ready, well-documented code. No placeholder TODOs. " +
         (language ? `Use ${language}. ` : "") +
-        (file_name ? `The file is ${file_name}. ` : "") +
+        (file_name ? `File: ${file_name}. ` : "") +
         "Structure: 1) brief explanation, 2) complete code in a fenced block, 3) how to run it.";
 
       const userMsg = existing_code
@@ -191,11 +209,10 @@ function createServer() {
     }
   );
 
-  // Tool 3: Code review
+  // ─── Tool 3: review_code ──────────────────────────────────────
   server.tool(
     "review_code",
-    "Have Claude review code for bugs, security issues, performance, " +
-    "and best practices. Returns a detailed review with suggested fixes.",
+    "Have Claude review code for bugs, security, performance, best practices — IT Department.",
     {
       code:        z.string().describe("The code to review"),
       language:    z.string().optional().describe("Programming language"),
@@ -204,9 +221,9 @@ function createServer() {
     async ({ code, language, focus_areas }) => {
       const sys =
         "You are a senior code reviewer. Review for bugs, security, performance, " +
-        "and best practices. For each issue give the problem and a concrete fix. " +
-        (focus_areas ? `Focus especially on: ${focus_areas}. ` : "") +
-        "End with an overall assessment and the corrected code.";
+        "and best practices. For each issue: problem + concrete fix. " +
+        (focus_areas ? `Focus: ${focus_areas}. ` : "") +
+        "End with overall assessment and corrected code.";
 
       const userMsg = `Review this ${language || ""} code:\n\`\`\`${language || ""}\n${code}\n\`\`\``;
 
@@ -225,61 +242,84 @@ function createServer() {
     }
   );
 
-  // Tool 4: Search knowledge base
+  // ─── Tool 4: search_knowledge ─────────────────────────────────
   server.tool(
     "search_knowledge",
-    "Search Roman's business knowledge base for information about MetalMarket, " +
-    "deals, contacts, pipelines, products, and company context. " +
-    "Use this to find specific business details before asking Claude a question.",
+    "Search Spartan's business knowledge base by keyword. Optionally filter by department: " +
+    "finance, electronics, chemicals, health, accounts, rd, it, analytics. " +
+    "Analytics Department has access to all files across all departments.",
     {
-      query:       z.string().describe("Search query — keywords about the topic (e.g. 'GPU servers', 'European pipeline', 'casting forging')"),
-      max_results: z.number().optional().describe("Max results to return (default 5)"),
+      query:       z.string().describe("Search keywords (e.g. 'GPU servers', 'catalyst EFKO', 'wheat Suslov')"),
+      department:  z.string().optional().describe("Filter by department: finance, electronics, chemicals, health, accounts, rd, it, analytics"),
+      max_results: z.number().optional().describe("Max results (default 5)"),
     },
-    async ({ query, max_results }) => {
-      const results = searchKnowledge(query, max_results || 5);
+    async ({ query, department, max_results }) => {
+      // Analytics sees everything
+      const dept = department?.toLowerCase() === "analytics" ? null : department;
+      const results = searchKnowledge(query, dept, max_results || 5);
       const peopleResults = formatPeople(query);
 
       let text = formatResults(results);
       if (peopleResults) {
         text += `\n\n---\n\nPEOPLE:\n${peopleResults}`;
       }
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // ─── Tool 5: get_profile ──────────────────────────────────────
+  server.tool(
+    "get_profile",
+    "Get Spartan's full business profile, group structure, org chart with all 8 departments, and a directory of people.",
+    {},
+    async () => {
+      const deptList = DEPT_IDS.map(id => {
+        const d = KB.departments[id];
+        const topicCount = Object.keys(d.topics).length;
+        return `### ${d.name}\nScope: ${d.scope}\nTopics (${topicCount}): ${Object.keys(d.topics).join(", ")}`;
+      }).join("\n\n");
+
+      const peopleList = Object.values(KB.people).map(p =>
+        `- **${p.name}**${p.aliases ? ` (${p.aliases.join(", ")})` : ""}: ${p.role || p.relation || ""} → ${DEPT_NAMES[p.department] || "unassigned"}`
+      ).join("\n");
+
+      const text = `# SPARTAN — ${KB.profile.name}
+${KB.profile.role}, ${KB.profile.company}
+Website: ${KB.profile.website} | Email: ${KB.profile.email}
+HQ: ${KB.profile.hq}
+Background: ${KB.profile.background}
+Languages: ${KB.profile.languages}
+
+## Hierarchy
+- **Spartan** (CEO): ${KB.hierarchy.spartan.description}
+- **The Secretary**: ${KB.hierarchy.secretary.description}
+
+## Group Structure
+${Object.entries(KB.group_structure).map(([k, v]) => `- ${v}`).join("\n")}
+
+## Departments
+${deptList}
+
+## Key People
+${peopleList}`;
 
       return { content: [{ type: "text", text }] };
     }
   );
 
-  // Tool 5: Get full profile
+  // ─── Tool 6: list_departments ─────────────────────────────────
   server.tool(
-    "get_profile",
-    "Get Roman's full business profile — identity, company info, group structure, " +
-    "and a list of all knowledge base topics available.",
+    "list_departments",
+    "List all departments with their scope and topic count. Use to understand the org structure before searching.",
     {},
     async () => {
-      const topicList = Object.entries(KB.topics).map(([id, t]) =>
-        `- ${id}: ${t.keywords.slice(0, 5).join(", ")}`
-      ).join("\n");
+      const lines = DEPT_IDS.map(id => {
+        const d = KB.departments[id];
+        const topics = Object.keys(d.topics);
+        return `**${d.name}** (${id})\nScope: ${d.scope}\nTopics: ${topics.join(", ")} (${topics.length})`;
+      });
 
-      const peopleList = Object.values(KB.people).map(p =>
-        `- ${p.name}: ${p.role || p.relation || ""}`
-      ).join("\n");
-
-      const text = `# Profile: ${KB.profile.name}
-${KB.profile.role}, ${KB.profile.company}
-Website: ${KB.profile.website}
-Email: ${KB.profile.email}
-HQ: ${KB.profile.hq}
-Background: ${KB.profile.background}
-Languages: ${KB.profile.languages}
-
-## Group Structure
-${Object.entries(KB.group_structure).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
-
-## Knowledge Base Topics
-${topicList}
-
-## Key People
-${peopleList}`;
-
+      const text = `# Organization — 8 Departments\n\nSpartan (CEO) → The Secretary → All Departments\n\n${lines.join("\n\n")}`;
       return { content: [{ type: "text", text }] };
     }
   );
@@ -291,19 +331,18 @@ ${peopleList}`;
 const app = express();
 app.use(express.json());
 
-// Health check (no auth needed)
 app.get("/", (_req, res) => {
   res.json({
     status: "ok",
     server: "claude-assistant",
-    version: "2.0.0",
-    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile"],
-    knowledge_topics: Object.keys(KB.topics).length,
+    version: "3.0.0",
+    hierarchy: { ceo: "Spartan", assistant: "The Secretary" },
+    departments: DEPT_IDS.map(id => ({ id, name: KB.departments[id].name, topics: Object.keys(KB.departments[id].topics).length })),
+    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments"],
     transport: "Streamable HTTP",
   });
 });
 
-// Auth middleware for /mcp
 app.use("/mcp", (req, res, next) => {
   const auth = req.headers.authorization;
   if (auth !== `Bearer ${AUTH_TOKEN}`) {
@@ -312,65 +351,41 @@ app.use("/mcp", (req, res, next) => {
   next();
 });
 
-// Session storage
 const sessions = new Map();
 
-// POST /mcp — handles all MCP JSON-RPC requests
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
-
   if (sessionId && sessions.has(sessionId)) {
     const transport = sessions.get(sessionId);
     await transport.handleRequest(req, res, req.body);
     return;
   }
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
   const mcpServer = createServer();
   await mcpServer.connect(transport);
-
-  transport.onclose = () => {
-    const sid = transport.sessionId;
-    if (sid) sessions.delete(sid);
-  };
-
+  transport.onclose = () => { const sid = transport.sessionId; if (sid) sessions.delete(sid); };
   await transport.handleRequest(req, res, req.body);
-
-  if (transport.sessionId) {
-    sessions.set(transport.sessionId, transport);
-  }
+  if (transport.sessionId) { sessions.set(transport.sessionId, transport); }
 });
 
-// GET /mcp — SSE stream
 app.get("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
-  if (!sessionId || !sessions.has(sessionId)) {
-    res.status(400).json({ error: "No active session. POST /mcp first." });
-    return;
-  }
+  if (!sessionId || !sessions.has(sessionId)) { res.status(400).json({ error: "No active session. POST /mcp first." }); return; }
   const transport = sessions.get(sessionId);
   await transport.handleRequest(req, res);
 });
 
-// DELETE /mcp — close session
 app.delete("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
-  if (!sessionId || !sessions.has(sessionId)) {
-    res.status(400).json({ error: "No active session." });
-    return;
-  }
+  if (!sessionId || !sessions.has(sessionId)) { res.status(400).json({ error: "No active session." }); return; }
   const transport = sessions.get(sessionId);
   await transport.close();
   sessions.delete(sessionId);
   res.status(200).json({ status: "closed" });
 });
 
-// ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Claude MCP Server v2.0.0 running on port ${PORT}`);
-  console.log(`Knowledge base: ${Object.keys(KB.topics).length} topics, ${Object.keys(KB.people).length} people`);
+  console.log(`Claude MCP Server v3.0.0 — Spartan Command`);
+  console.log(`Departments: ${DEPT_IDS.length} | Topics: ${TOPIC_INDEX.length} | People: ${Object.keys(KB.people).length}`);
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
 });
