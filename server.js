@@ -4,6 +4,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import express from "express";
 import { randomUUID } from "crypto";
 import { z } from "zod";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 // ── Config ──────────────────────────────────────────────────────
 const PORT          = parseInt(process.env.PORT || "3001", 10);
@@ -11,13 +14,90 @@ const AUTH_TOKEN    = process.env.AUTH_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL         = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
 
-if (!ANTHROPIC_KEY) {
-  console.error("ANTHROPIC_API_KEY is required.");
-  process.exit(1);
+if (!ANTHROPIC_KEY) { console.error("ANTHROPIC_API_KEY is required."); process.exit(1); }
+if (!AUTH_TOKEN)    { console.error("AUTH_TOKEN is required."); process.exit(1); }
+
+// ── Load knowledge base ─────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
+const KB = JSON.parse(readFileSync(join(__dirname, "knowledge.json"), "utf-8"));
+
+// Build compact profile for system prompt (~2KB)
+const PROFILE_CONTEXT = `You are Claude, acting as an AI assistant for ${KB.profile.name} (${KB.profile.name_ru}), ${KB.profile.role} of ${KB.profile.company}.
+
+KEY CONTEXT:
+- Company: ${KB.profile.company_description}
+- HQ: ${KB.profile.hq}
+- Co-founder: ${KB.profile.co_founder}
+- Background: ${KB.profile.background}
+- Languages: ${KB.profile.languages}
+- Locations: ${KB.profile.locations}
+- Commercial terms: ${KB.profile.commercial_terms}
+- Dubai entity: ${KB.profile.dubai_entity}
+- Group structure: ${Object.values(KB.group_structure).join("; ")}
+
+You have access to Roman's business knowledge base covering: ${Object.keys(KB.topics).join(", ")}. When answering, draw on this context to give informed, specific responses that reflect understanding of MetalMarket's business.`;
+
+// Build keyword index for search
+function buildIndex() {
+  const index = [];
+  for (const [topicId, topic] of Object.entries(KB.topics)) {
+    index.push({
+      id: topicId,
+      keywords: topic.keywords.map(k => k.toLowerCase()),
+      summary: topic.summary,
+      details: topic.details || null,
+    });
+  }
+  return index;
 }
-if (!AUTH_TOKEN) {
-  console.error("AUTH_TOKEN is required. Pick any secret string.");
-  process.exit(1);
+const TOPIC_INDEX = buildIndex();
+
+// Search knowledge by query string — returns matching topic summaries
+function searchKnowledge(query, maxResults = 5) {
+  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+  const scored = TOPIC_INDEX.map(topic => {
+    let score = 0;
+    for (const term of terms) {
+      // Exact keyword match = 10 points
+      if (topic.keywords.some(k => k === term)) score += 10;
+      // Partial keyword match = 5 points
+      else if (topic.keywords.some(k => k.includes(term) || term.includes(k))) score += 5;
+      // Summary mention = 2 points
+      else if (topic.summary.toLowerCase().includes(term)) score += 2;
+      // Details mention = 1 point
+      else if (topic.details && topic.details.toLowerCase().includes(term)) score += 1;
+    }
+    return { ...topic, score };
+  })
+  .filter(t => t.score > 0)
+  .sort((a, b) => b.score - a.score)
+  .slice(0, maxResults);
+
+  return scored;
+}
+
+// Format search results as readable text
+function formatResults(results) {
+  if (results.length === 0) return "No matching topics found in the knowledge base.";
+  return results.map(r => {
+    let text = `## ${r.id.replace(/_/g, " ").toUpperCase()} (relevance: ${r.score})\n${r.summary}`;
+    if (r.details) text += `\n\nDetails: ${r.details}`;
+    return text;
+  }).join("\n\n---\n\n");
+}
+
+// Format people info
+function formatPeople(query) {
+  const terms = query.toLowerCase().split(/\s+/);
+  const matches = Object.entries(KB.people).filter(([key, person]) => {
+    const searchable = `${key} ${person.name} ${person.aliases?.join(" ") || ""} ${person.role || ""} ${person.relation || ""}`.toLowerCase();
+    return terms.some(t => searchable.includes(t));
+  });
+  if (matches.length === 0) return null;
+  return matches.map(([, p]) =>
+    `**${p.name}**${p.aliases ? ` (aka ${p.aliases.join(", ")})` : ""}: ${p.role || p.relation || ""}`
+  ).join("\n");
 }
 
 // ── Anthropic client ────────────────────────────────────────────
@@ -27,20 +107,32 @@ const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
 function createServer() {
   const server = new McpServer({
     name: "claude-assistant",
-    version: "1.0.0",
+    version: "2.0.0",
   });
 
-  // Tool 1: General-purpose Claude
+  // Tool 1: General-purpose Claude (now with business context)
   server.tool(
     "ask_claude",
     "Send a question or task to Claude AI and get a detailed response. " +
-    "Use when you need help with analysis, writing, research, summarisation, " +
-    "translation, or any task you cannot complete yourself.",
+    "Claude knows Roman's business context — MetalMarket, deals, contacts, pipelines. " +
+    "Use for analysis, writing, research, summarisation, translation, or any task.",
     {
       prompt:  z.string().describe("The question or task for Claude"),
-      context: z.string().optional().describe("Optional background info or context"),
+      context: z.string().optional().describe("Optional additional context"),
     },
     async ({ prompt, context }) => {
+      // Auto-search knowledge base for relevant context
+      const kbResults = searchKnowledge(prompt, 3);
+      const peopleResults = formatPeople(prompt);
+
+      let systemMsg = PROFILE_CONTEXT;
+      if (kbResults.length > 0) {
+        systemMsg += `\n\nRELEVANT BUSINESS CONTEXT:\n${formatResults(kbResults)}`;
+      }
+      if (peopleResults) {
+        systemMsg += `\n\nRELEVANT PEOPLE:\n${peopleResults}`;
+      }
+
       const userMsg = context
         ? `Context:\n${context}\n\nTask:\n${prompt}`
         : prompt;
@@ -48,6 +140,7 @@ function createServer() {
       const res = await anthropic.messages.create({
         model: MODEL,
         max_tokens: 8192,
+        system: systemMsg,
         messages: [{ role: "user", content: userMsg }],
       });
 
@@ -59,7 +152,7 @@ function createServer() {
     }
   );
 
-  // Tool 2: Coding assistant
+  // Tool 2: Coding assistant (with company context)
   server.tool(
     "code_with_claude",
     "Send a coding task to Claude Code. Claude will write, review, refactor, " +
@@ -72,7 +165,7 @@ function createServer() {
     },
     async ({ task, language, existing_code, file_name }) => {
       const sys =
-        "You are Claude Code, an expert software engineer. " +
+        `You are Claude Code, an expert software engineer working for ${KB.profile.company}. ` +
         "Write clean, production-ready, well-documented code. " +
         "Always provide complete, working code — no placeholder TODOs. " +
         (language ? `Use ${language}. ` : "") +
@@ -132,6 +225,65 @@ function createServer() {
     }
   );
 
+  // Tool 4: Search knowledge base
+  server.tool(
+    "search_knowledge",
+    "Search Roman's business knowledge base for information about MetalMarket, " +
+    "deals, contacts, pipelines, products, and company context. " +
+    "Use this to find specific business details before asking Claude a question.",
+    {
+      query:       z.string().describe("Search query — keywords about the topic (e.g. 'GPU servers', 'European pipeline', 'casting forging')"),
+      max_results: z.number().optional().describe("Max results to return (default 5)"),
+    },
+    async ({ query, max_results }) => {
+      const results = searchKnowledge(query, max_results || 5);
+      const peopleResults = formatPeople(query);
+
+      let text = formatResults(results);
+      if (peopleResults) {
+        text += `\n\n---\n\nPEOPLE:\n${peopleResults}`;
+      }
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // Tool 5: Get full profile
+  server.tool(
+    "get_profile",
+    "Get Roman's full business profile — identity, company info, group structure, " +
+    "and a list of all knowledge base topics available.",
+    {},
+    async () => {
+      const topicList = Object.entries(KB.topics).map(([id, t]) =>
+        `- ${id}: ${t.keywords.slice(0, 5).join(", ")}`
+      ).join("\n");
+
+      const peopleList = Object.values(KB.people).map(p =>
+        `- ${p.name}: ${p.role || p.relation || ""}`
+      ).join("\n");
+
+      const text = `# Profile: ${KB.profile.name}
+${KB.profile.role}, ${KB.profile.company}
+Website: ${KB.profile.website}
+Email: ${KB.profile.email}
+HQ: ${KB.profile.hq}
+Background: ${KB.profile.background}
+Languages: ${KB.profile.languages}
+
+## Group Structure
+${Object.entries(KB.group_structure).map(([k, v]) => `- ${k}: ${v}`).join("\n")}
+
+## Knowledge Base Topics
+${topicList}
+
+## Key People
+${peopleList}`;
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
   return server;
 }
 
@@ -144,7 +296,9 @@ app.get("/", (_req, res) => {
   res.json({
     status: "ok",
     server: "claude-assistant",
-    tools: ["ask_claude", "code_with_claude", "review_code"],
+    version: "2.0.0",
+    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile"],
+    knowledge_topics: Object.keys(KB.topics).length,
     transport: "Streamable HTTP",
   });
 });
@@ -165,14 +319,12 @@ const sessions = new Map();
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
 
-  // Existing session
   if (sessionId && sessions.has(sessionId)) {
     const transport = sessions.get(sessionId);
     await transport.handleRequest(req, res, req.body);
     return;
   }
 
-  // New session (initialize request)
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
   });
@@ -180,7 +332,6 @@ app.post("/mcp", async (req, res) => {
   const mcpServer = createServer();
   await mcpServer.connect(transport);
 
-  // Clean up on close
   transport.onclose = () => {
     const sid = transport.sessionId;
     if (sid) sessions.delete(sid);
@@ -188,13 +339,12 @@ app.post("/mcp", async (req, res) => {
 
   await transport.handleRequest(req, res, req.body);
 
-  // Store after handling (sessionId is set during initialize)
   if (transport.sessionId) {
     sessions.set(transport.sessionId, transport);
   }
 });
 
-// GET /mcp — SSE stream for server-initiated messages
+// GET /mcp — SSE stream
 app.get("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
   if (!sessionId || !sessions.has(sessionId)) {
@@ -220,7 +370,7 @@ app.delete("/mcp", async (req, res) => {
 
 // ── Start ───────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Claude MCP Server running on port ${PORT}`);
+  console.log(`Claude MCP Server v2.0.0 running on port ${PORT}`);
+  console.log(`Knowledge base: ${Object.keys(KB.topics).length} topics, ${Object.keys(KB.people).length} people`);
   console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
-  console.log(`Health check: http://localhost:${PORT}/`);
 });

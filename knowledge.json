@@ -1,0 +1,166 @@
+{
+  "profile": {
+    "name": "Roman Eduardovich Volkov",
+    "name_ru": "Роман Эдуардович Волков",
+    "role": "Managing Director & Co-Founder",
+    "company": "MetalMarket Technologies India Pvt. Ltd.",
+    "website": "metal-market.in",
+    "hq": "3rd-5th Floor, Huda City Centre Metro Station, Sector 29 Road, Gurugram, Haryana 122001",
+    "email": "order@metal-market.in",
+    "dubai_entity": "MetalMarket LLC-FZ, Meydan Free Zone, Dubai (trade licence 2306881.01)",
+    "background": "BCG, Eurasian Resources Group, MSU Physics",
+    "languages": "Russian (primary), English (fully fluent), learning Hindi",
+    "locations": "Gurugram, Dubai, Istanbul, Germany",
+    "github": "Gainsandveins",
+    "co_founder": "Igor Karelin (CEO, IT background — Motorola/Mars/Severstal)",
+    "company_description": "India-based managed contract manufacturing platform connecting vetted Indian precision manufacturers with industrial buyers in Europe, US, and Middle East. Covers CNC machining, casting, forging, sheet metal fabrication, injection moulding, surface treatment. 110+ audited manufacturing partners (IATF 16949, AS9100, ISO 9001, ISO 13485). Offices in Gurugram (HQ), Bengaluru, Dubai.",
+    "commercial_terms": "FCA India (Incoterms 2020), after export customs clearance. Export payment: 50% advance, 50% on shipping docs."
+  },
+  "group_structure": {
+    "mm_technologies_india": "MetalMarket Technologies India Pvt. Ltd. — main CM platform entity, Gurugram",
+    "mm_dubai": "MetalMarket LLC-FZ — Dubai free zone entity, commodity trading and re-export",
+    "mercury_trading_hk": "Mercury Trading Limited — Hong Kong company for equipment trading and FX operations",
+    "mercury_trading_india": "Mercury Trading — Indian proprietorship (Himanshu Pal), IEC BRXPP1100K, Ghaziabad UP; GPU/electronics trading",
+    "parent_mont": "Parent Mont / Nidimo International — related Indian trading entity",
+    "tuong_thien": "Tuong Thien Trade Development Research Co., Ltd. — Vietnamese trading company, VND operations only",
+    "mm_group": "MM Group — umbrella reference for 26 companies, 27 bank accounts across 10 countries; payment agent services at CBR rate"
+  },
+  "topics": {
+    "contract_manufacturing": {
+      "keywords": ["CM", "CNC", "casting", "forging", "machining", "sheet metal", "fabrication", "manufacturing", "vendor", "RFQ", "costing", "Xometry", "parts", "prototype", "tooling"],
+      "summary": "Core business. Strategic focus: H1 (casting/forging + machined parts) and H8 (managed sourcing & QA), with H3 (CNC machining) as running revenue model. Revenue targets: $5M → $20M → $50M → $100M. Preparing seed round investor presentation (Oct 2026). Lead times: CNC 20-30 days, casting 45-60 days, sea transit 25-35 days.",
+      "details": "Multi-client parametric Excel costing calculator with VLOOKUP-based Materials and MachineRates. Key calibration: serial turning real cycle = model ×0.4-0.55. Xometry Europe unfulfilled grades (vendor development opportunity): Ti Gr2/Gr5, SS303, 17-4PH, 42CrMo4, 16MnCr5, PEEK, PE500, 1.2316. MM pays DDP freight + duty at shipment, recovers in final invoice. WC model: supplier 50% at PO / 50% at dispatch; ~half of customers pay only 10% advance (MM funds 40% gap); ~half pay balance only after arrival (~45 days). German investor backing. Planning follow-on raise over 18 months (IT, marketing, working capital)."
+    },
+    "european_pipeline": {
+      "keywords": ["Europe", "EU", "Hannover", "Automate", "European", "pipeline", "outreach", "BD", "Germany", "leads"],
+      "summary": "Active European BD following Hannover Messe 2026 (74+ contacts) and Automate 2026 Chicago (49 companies/53 contacts). 151 consolidated contacts. HOT leads: Gimatic, Kimura Foundry, HAHN, SMW-Autoblok, Tolomatic, Delfa. Active targets include SEW-Eurodrive, FAULHABER, ZF, BMW, igus, Gestamp."
+    },
+    "us_pipeline": {
+      "keywords": ["US", "USA", "American", "medical", "robotics", "prosthetics", "outreach"],
+      "summary": "Systematic US outreach for CM. First priority market. Targets: mid-market ($50M-$1B revenue). First batch: medical prosthetics/implants and robotics for CNC machining. 15 deep-researched accounts, 55 named contacts. Roman sends LinkedIn outreach himself as Founder & MD. Deepak Malik covers US BD."
+    },
+    "gpu_servers": {
+      "keywords": ["GPU", "server", "B200", "B300", "H100", "NVIDIA", "AI", "compute", "Dell", "HGX", "Mercury", "electronics", "Singapore", "export"],
+      "summary": "G-512 deal: 512 AI GPU servers, FCA India → Dubai → end buyer, 8 batches of 64. Unit price ~$920K. Dell PowerEdge XE7740 (8×H200) and XE9780 (HGX B200) actively quoted through Puneet/Corp Assets/Redington. 45 servers total, 10% advance / 90% escrow. Russian demand: 300-350 B-series units through end-2026. Mercury Worldwide (HK) as trading entity (ai-mercury.com). Also preparing GPU export from India to Singapore via Mercury Trading (Indian entity). Own B200 colocation evaluated at Sify Noida."
+    },
+    "russia_india_trading": {
+      "keywords": ["Russia", "India", "trading", "commodity", "coal", "chemical", "pharma", "wheat", "grain", "RUSAL", "helium", "fluorspar", "aluminium"],
+      "summary": "Multiple Russia-India trading directions: electronics (iPhones to Wildberries/Ozon), chemicals/pharma (Sairam Industries, PanChemicals, Sberbank LC ₹30Cr), coal (Shubarkol Kazakhstan Grade D to Indian cement/power), agricultural commodities (wheat, peas, sunflower oil, barley), fluorspar, helium (Amur GPP), aluminium A7 (RUSAL), special metals (MIDHANI Hyderabad)."
+    },
+    "agri_trading": {
+      "keywords": ["wheat", "grain", "пшеница", "barley", "peas", "sunflower", "agricultural", "agri", "Suslov", "Timerlan", "Gorov"],
+      "summary": "Evaluating multiple agricultural export deals. Suslov deal: 10,000 MT wheat, DAP Посинь, $225/t sale, ~$25/t margin, 41-day cycle, supplier Трейд Оверсиз, buyer Вентспилский Зерновой Терминал/Mariter (Latvia). Timerlan deal: payment to ХЗК (Kherson), 14-day cycle. Co-investor Gorov ($200K each). Arbitrage from Russian grain export bottleneck."
+    },
+    "vietnam_corridor": {
+      "keywords": ["Vietnam", "VND", "rubber", "Nama", "Tuong Thien", "Mercury", "MoD", "corridor"],
+      "summary": "VND→RUB conversion corridor via Vietnamese trading company Tuong Thien. Equipment import for Vietnamese MoD via agency model. Rubber export used for commodity swap (VND→USD/CNY). Mercury Trading (HK) handles FX. Q4 2026 target: $10M VND→RUB volume. Ramp: $100K→$250K→$500K→$750K→$1M per cycle. 7% margin on VND→RUB. VTB bridge financing sought. MB Bank (Military Bank) for MoD VND payments."
+    },
+    "payment_corridor": {
+      "keywords": ["payment", "rupee", "RUB", "INR", "USDT", "corridor", "T-Bank", "NBFC", "remittance"],
+      "summary": "MM Group payment agent/rupee corridor business. 26 companies, 27 bank accounts, 10 countries. Payment services at CBR rate with tiered fees. USDT conversion at 0.5%. T-Bank partnership teaser: MetalMarket NBFC lending for Indian buyers + payment agent for T-Bank clients."
+    },
+    "pharma_chemicals": {
+      "keywords": ["pharma", "chemical", "PanChemicals", "SCIENCE", "excipient", "API", "reagent", "Sairam", "trehalose", "acetonitrile", "Methocel", "HPMC"],
+      "summary": "Pharmaceutical/chemical trading via PanChemicals-SCIENCE. Import history: SCIENCE $5.84M (66% Bionify), PAN Chemicals $5.75M. Sberbank LC facility. Active sourcing: acetonitrile, Methocel K100M (HPMC), trehalose (Labman deal), piperazine, rizatriptan, Roquette products, Zeosil silica, VPEG-2400, Shin-Etsu Tylopur. Also evaluating Tirzepатид localization in India."
+    },
+    "efko_catalysts": {
+      "keywords": ["EFKO", "ЭФКО", "catalyst", "nickel", "hydrogenation", "Johnson Matthey"],
+      "summary": "Supply opportunity for nickel/Ni-Mo hydrogenation catalysts to GK EFKO (Russia's largest specialty fats/margarine producer). Indian suppliers: Suhans Chemicals (Jalgaon), Vineeth Chemicals. JM HTC NI 500 RP at $60.06/kg FOB Nhava Sheva. Commercial offer MM/CO-2026/09-02 prepared for Sergey Ivanov (EFKO exec director)."
+    },
+    "polyplast": {
+      "keywords": ["Polyplast", "Полипласт", "superplasticizer", "cement", "additive", "Chemexim"],
+      "summary": "Trading deal for Polyplast (Russian chemical additives). Roman as organizer (30% profit share). Seeking $8M financial investor (70% share). Products: superplasticizers for cement and paint. Indian buyers: Birla White, JK Cement, APL, Ramco, Sonalac. Polyplast undergoing financial restructuring in Russia."
+    },
+    "coal_trading": {
+      "keywords": ["coal", "Shubarkol", "Kazakhstan", "уголь", "Grade D"],
+      "summary": "MetalMarket markets Shubarkol (Kazakhstan) Grade D coal to Indian buyers. Producer: JSC Shubarkol Komir. Sub-bituminous, ultra-low ash (3.58%), low sulphur (0.23%), NCV ~24,634 kJ/kg. Target: cement and thermal power blending."
+    },
+    "sberbank_account": {
+      "keywords": ["Sberbank", "bank", "account", "KYC", "LCBD", "trade finance", "LC"],
+      "summary": "Sberbank India current account + LCBD facility for MetalMarket Technologies India. Application filed May 2026, Under Review. KYC for 4 foreign shareholders (Roman, Igor, Evgenij Renge, Natalia Pravednikova). RM: Prashant Shetgaonkar. LCBD for chemical vertical with PanChemicals/AppScience. Multiple document issues being resolved."
+    },
+    "ilizarov": {
+      "keywords": ["Ilizarov", "orthopedic", "CITO", "medical", "apparatus", "osteosynthesis"],
+      "summary": "MetalMarket producing Ilizarov spoke-rod apparatus components (transosseous osteosynthesis). Full BOM: ~285 SKUs — rings, arcs, brackets, plates, beams, rods, wires, fasteners, instruments, 14 kit configs. Materials: stainless steel, titanium alloy, CFRP."
+    },
+    "robotics": {
+      "keywords": ["robot", "humanoid", "Flexiv", "Agile", "HMND", "distribution"],
+      "summary": "Flexiv adaptive robot distribution agreement for India being negotiated. Agile Robots (Munich, €200M revenue) as parallel target. HMND/Artem Sokolov materials prepared. CM MetalMarket positioned as component supplier for humanoid robot BOM."
+    },
+    "bitumen": {
+      "keywords": ["bitumen", "VG-30", "road"],
+      "summary": "Sourcing Bitumen VG-30 for Indian end-buyer via MetalMarket Dubai. 5,000 MT, Sep 2026 loading. Target $450/MT CIF Indian port. Iranian/Iraqi origin acceptable."
+    },
+    "rebar_haifa": {
+      "keywords": ["rebar", "TMT", "Israel", "Haifa", "steel"],
+      "summary": "5,000 MT TMT rebars to Haifa, Israel, CFR FO. Grade S500W per SI 4466. Originally JSPL Fe500D ex Paradip. Now sourcing Chinese mill quotes."
+    },
+    "manhole_castings": {
+      "keywords": ["manhole", "GOST", "ductile iron", "casting", "gully"],
+      "summary": "RFQ 101/2526: 15 line items GOST 3634 ductile iron manhole covers and rainwater gullies. 250 pcs per drawing. Tooling included at annual volume 200 MT/month."
+    },
+    "sandalwood": {
+      "keywords": ["sandalwood", "chandan", "heartwood"],
+      "summary": "Evaluating entering Indian sandalwood industry as private player. Has very good supply of premium legal heartwood (Oct 2026)."
+    },
+    "zeosil_silica": {
+      "keywords": ["Zeosil", "silica", "Solvay", "conveyor", "rubber"],
+      "summary": "Procuring Zeosil 1085 GR (precipitated silica) from Solvay for conveyor belt manufacturing. Partners: Sainam Industries, GB Gummies. Target ₹230/kg Mumbai. Solvay offers EUR 2,700/MT CIF Nhava Sheva. Annual need: 15-20 MT."
+    },
+    "wedding": {
+      "keywords": ["wedding", "свадьба", "düğün", "Alev", "Istanbul", "venue"],
+      "summary": "Wedding date: 9 July 2027 (Friday). Planning in Turkey — comparing Istanbul, İzmir, Bodrum venues. Guest list 100-180. Budget ~€30K for 80 guests. Shortlisted venues: Casa Lavanda, Princes' Palace, Swissôtel, KeyUrla, A'jia Hotel, OKU Bodrum. Also exploring 40-guest countryside option."
+    },
+    "dlyft": {
+      "keywords": ["DLYFT", "Hexonic", "Rohtak", "raw material"],
+      "summary": "DLYFT India LLP (Rohtak) — MS raw material supply customer and CM partner. Hexonic order ₹2 Cr confirmed."
+    },
+    "rf_edo": {
+      "keywords": ["ЭДО", "EDO", "Russia", "филиал", "branch", "КЭП"],
+      "summary": "Setting up Russian ЭДО for Metal Market as foreign non-resident. Has RF ИНН but not in ЕГРЮЛ. Considering RF branch accreditation via МИФНС №47 for КЭП. Strategic constraint: keep as non-resident."
+    },
+    "nominee_company": {
+      "keywords": ["nominee", "company", "chemicals", "electronics"],
+      "summary": "Opening new Indian company with nominee director/owner for chemicals and electronics trading."
+    },
+    "hk_equipment": {
+      "keywords": ["Hong Kong", "HK", "Mercury", "equipment", "China"],
+      "summary": "Mercury Trading Limited (HK company) buys and resells equipment. Supplier in China. Structure involves entities in Indonesia and USA."
+    },
+    "marketing": {
+      "keywords": ["marketing", "lead generation", "Google Ads", "SEO", "outreach", "2nd Chapter", "Samin"],
+      "summary": "Three-way vendor comparison for EU/US lead gen. Samin Rizvi + Adya Ranjan engaged on 3-month Google Search SLA from Sep 2026. Combined US+EU ICP. Min 2 conversions/week month 1, 3/week thereafter."
+    },
+    "costing": {
+      "keywords": ["costing", "calculator", "parametric", "quote", "pricing"],
+      "summary": "Multi-client parametric Excel calculator. Clients: Torun, Delfa, Motherson, Xometry (188 STEP files), Kivnon, Motorika, Tesla, Martistel, Audi/Eaton, Xandor. Key findings: serial turning real cycle = model ×0.4-0.55."
+    },
+    "legal_corporate": {
+      "keywords": ["legal", "dispute", "agreement", "loan", "Furrvy", "FinAGG", "Akurath"],
+      "summary": "Active matters: Furrvy Pet Care convertible loan (₹7L, 24% p.a., ₹5Cr cap). FinAGG security deposit dispute (₹7.5L hold). Akurath Steels debit note dispute (₹39.77L). Agency agreement template (10% GP, 24-month non-circumvention)."
+    },
+    "health_insurance": {
+      "keywords": ["insurance", "HDFC", "Naveen", "health cover"],
+      "summary": "HDFC Ergo health insurance being purchased for Naveen Kumar's family of five. Comparing Optima Select, Secure, Secure+ at 10L base."
+    },
+    "cybersteel": {
+      "keywords": ["CyberSteel", "stainless", "pipe", "chromium"],
+      "summary": "India stainless steel pipe market analysis (HS 7304, Ratnamani benchmark, BIS QCO 2025). Rimera Group proposals. Chromium chemicals for MIDHANI."
+    },
+    "gpu_export_singapore": {
+      "keywords": ["Singapore", "GPU", "export", "ECCN", "3A090"],
+      "summary": "Exporting NVIDIA GPU accelerator cards (ECCN 3A090.a) from India to Singapore via Mercury Trading. Unit price $22K ex-GST, FCA Mumbai/Delhi. Needs EAR compliance docs from Singapore buyer."
+    }
+  },
+  "people": {
+    "igor_karelin": {"name": "Igor Karelin", "role": "Co-Founder & CEO, MetalMarket Technologies India", "background": "IT — Motorola/Mars/Severstal"},
+    "sudhanshu": {"name": "Sudhanshu Kathuria", "aliases": ["Sudhansh"], "role": "Colleague, procurement lead for GPU/electronics sourcing"},
+    "deepak_malik": {"name": "Deepak Malik", "role": "Colleague, US/field business development. Attended Hannover Messe 2026 and Automate 2026."},
+    "akshay_kumar": {"name": "Akshay Kumar", "role": "Colleague, India ops/marketing"},
+    "naveen_kumar": {"name": "Naveen Kumar", "aliases": ["Navin"], "role": "Colleague, India ops/marketing. Project owner for CM MetalMarket KPI scorecard. 150 outbound approaches/month target."},
+    "alev": {"name": "Alev Özden", "relation": "Roman's fiancée, from Mersin Turkey. Wedding planned July 2027."},
+    "dima_suslov": {"name": "Dima Suslov", "role": "Agricultural commodity trader. Provides deal passports. Non-sanctioned grain exporter. Structures deals in Dubai. SGS as surveyor. 50/50 profit split."},
+    "timerlan": {"name": "Timerlan", "role": "Agricultural commodity trader. Also trades construction materials. Personally guarantees deals."},
+    "gorov": {"name": "Gorov", "role": "Co-investor with MetalMarket on agricultural commodity deals"}
+  }
+}
