@@ -202,7 +202,7 @@ async function searchPeople(query) {
 // ── Document records (Shared Records archive, 3,577 rows) ──────
 // Ranked full-text search runs server-side in Postgres via the
 // search_records() function so relevance ordering is real, not guessed.
-async function searchRecords({ query, department, area, docType, filesOnly, limit }) {
+async function searchRecords({ query, department, area, docType, filesOnly, limit, loose }) {
   const res = await fetch(`${SB_REST}/rpc/search_records`, {
     method: "POST",
     headers: SB_HEADERS,
@@ -213,6 +213,7 @@ async function searchRecords({ query, department, area, docType, filesOnly, limi
       type_f: docType || null,
       files_only: !!filesOnly,
       lim: Math.min(Math.max(parseInt(limit || 10, 10), 1), 50),
+      loose: !!loose,
     }),
   });
   if (!res.ok) throw new Error(`search_records failed (${res.status}): ${await res.text()}`);
@@ -245,22 +246,21 @@ function formatRecords(rows) {
 }
 
 // ── Conversations (past Claude chats, synced every 4 hours) ────
-async function searchConversations(query, limit = 5) {
-  const lim = Math.min(Math.max(parseInt(limit || 5, 10), 1), 25);
-  if (!query || !String(query).trim()) {
-    return sbQuery("conversations", `select=*&order=src_updated_at.desc&limit=${lim}`);
-  }
-  const q = encodeURIComponent(String(query).trim());
-  const rows = await sbQuery(
-    "conversations",
-    `select=*&fts=plfts(simple).${q}&order=src_updated_at.desc&limit=${lim}`
-  );
-  if (rows.length) return rows;
-  // fall back to a loose match on title/summary/entities
-  const terms = String(query).toLowerCase().split(/\s+/).filter(t => t.length > 2).slice(0, 4);
-  if (!terms.length) return [];
-  const or = terms.map(t => `title.ilike.*${t}*,summary.ilike.*${t}*,entities.ilike.*${t}*`).join(",");
-  return sbQuery("conversations", `select=*&or=(${or})&limit=${lim}`);
+// Goes through an RPC so punctuation in a question never collides with
+// PostgREST's filter grammar, where commas are delimiters.
+async function searchConversations(query, limit = 5, opts = {}) {
+  const res = await fetch(`${SB_REST}/rpc/search_conversations`, {
+    method: "POST",
+    headers: SB_HEADERS,
+    body: JSON.stringify({
+      q: query || null,
+      cat: opts.category || null,
+      lim: Math.min(Math.max(parseInt(limit || 5, 10), 1), 25),
+      loose: !!opts.loose,
+    }),
+  });
+  if (!res.ok) throw new Error(`search_conversations failed (${res.status}): ${await res.text()}`);
+  return res.json();
 }
 
 // Compact renderings for injection into a system prompt — full detail is a
@@ -356,7 +356,7 @@ async function createMessage(params) {
 function createServer() {
   const server = new McpServer({
     name: "claude-assistant",
-    version: "5.2.0",
+    version: "5.2.1",
   });
 
   // ─── Tool 1: ask_claude (with department-aware context) ───────
@@ -378,8 +378,8 @@ function createServer() {
       const [kbResults, peopleResults, docResults, convResults] = await Promise.all([
         searchKnowledge(prompt, department, 4).catch(() => []),
         searchPeople(prompt).catch(() => null),
-        searchRecords({ query: prompt, department, limit: 6 }).catch(() => []),
-        searchConversations(prompt, 3).catch(() => []),
+        searchRecords({ query: prompt, department, limit: 6, loose: true }).catch(() => []),
+        searchConversations(prompt, 3, { loose: true }).catch(() => []),
       ]);
 
       let systemMsg = PROFILE_CONTEXT;
@@ -808,10 +808,7 @@ ${peopleList}`;
     },
     async ({ query, category, limit }) => {
       try {
-        let rows = await searchConversations(query, limit || 5);
-        if (category) {
-          rows = rows.filter(r => (r.category || "").toLowerCase() === category.toLowerCase());
-        }
+        const rows = await searchConversations(query, limit || 5, { category });
         if (!rows.length) {
           return { content: [{ type: "text", text: `No conversations matched "${query || "(recent)"}".` }] };
         }
@@ -1007,7 +1004,7 @@ app.get("/", (_req, res) => {
   res.json({
     status: "ok",
     server: "claude-assistant",
-    version: "5.2.0",
+    version: "5.2.1",
     database: "supabase",
     model: RESOLVED_MODEL || "(not yet resolved)",
     models_available: AVAILABLE_MODELS.length || null,
@@ -1065,7 +1062,7 @@ async function start() {
     console.log("Loading knowledge base from Supabase...");
     await loadStaticData();
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Claude MCP Server v5.2.0 — Spartan Command (Supabase + Records)`);
+      console.log(`Claude MCP Server v5.2.1 — Spartan Command (Supabase + Records)`);
       console.log(`Database: ${SUPABASE_URL}`);
       console.log(`Departments: ${DEPT_IDS.length}`);
       console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
