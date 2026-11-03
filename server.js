@@ -659,30 +659,25 @@ ${peopleList}`;
     },
     async ({ department }) => {
       try {
-        const filter = department ? `&department_id=eq.${encodeURIComponent(department)}` : "";
-        const rows = await sbQuery(
-          "records",
-          `select=department_id,area,doc_type,storage_path&limit=5000${filter}`
+        // Aggregate in Postgres. Counting client-side is wrong here: PostgREST
+        // caps result rows (default 1000), so a row-by-row tally silently
+        // under-reports a 3,577-row table.
+        const res = await fetch(`${SB_REST}/rpc/archive_stats`, {
+          method: "POST",
+          headers: SB_HEADERS,
+          body: JSON.stringify({ dept: department || null }),
+        });
+        if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+        const s = await res.json();
+        const deptLines = (s.by_department || []).map(d =>
+          `  ${(DEPT_NAMES[d.department_id] || d.department_id || "—").padEnd(24)} ${String(d.total).padStart(5)} records, ${d.files} with files`
         );
-        const byDept = {}, byType = {};
-        let withFile = 0, personal = 0;
-        for (const r of rows) {
-          const d = r.department_id || "—";
-          byDept[d] = byDept[d] || { total: 0, files: 0 };
-          byDept[d].total++;
-          if (r.storage_path) { byDept[d].files++; withFile++; }
-          if (r.area === "personal") personal++;
-          const t = r.doc_type || "(none)";
-          byType[t] = (byType[t] || 0) + 1;
-        }
-        const deptLines = Object.entries(byDept)
-          .sort((a, b) => b[1].total - a[1].total)
-          .map(([d, v]) => `  ${(DEPT_NAMES[d] || d).padEnd(24)} ${String(v.total).padStart(5)} records, ${v.files} with files`);
-        const typeLines = Object.entries(byType)
-          .sort((a, b) => b[1] - a[1]).slice(0, 12)
-          .map(([t, n]) => `  ${t.slice(0, 40).padEnd(42)} ${n}`);
+        const typeLines = (s.by_type || []).map(t =>
+          `  ${String(t.doc_type).slice(0, 40).padEnd(42)} ${t.n}`
+        );
         return { content: [{ type: "text", text:
-          `ARCHIVE: ${rows.length} records, ${withFile} with downloadable files, ${personal} personal.\n\n` +
+          `ARCHIVE: ${s.total} records, ${s.with_files} with downloadable files ` +
+          `(${s.storage_mb} MB in storage), ${s.personal} personal.\n\n` +
           `BY DEPARTMENT\n${deptLines.join("\n")}\n\nTOP DOCUMENT TYPES\n${typeLines.join("\n")}` }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Failed to read archive stats: ${err.message}` }] };
@@ -757,7 +752,7 @@ async function start() {
     console.log("Loading knowledge base from Supabase...");
     await loadStaticData();
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Claude MCP Server v4.0.0 — Spartan Command (Supabase)`);
+      console.log(`Claude MCP Server v5.0.0 — Spartan Command (Supabase + Records)`);
       console.log(`Database: ${SUPABASE_URL}`);
       console.log(`Departments: ${DEPT_IDS.length}`);
       console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
