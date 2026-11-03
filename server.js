@@ -244,6 +244,54 @@ function formatRecords(rows) {
   }).join("\n\n---\n\n");
 }
 
+// ── Conversations (past Claude chats, synced every 4 hours) ────
+async function searchConversations(query, limit = 5) {
+  const lim = Math.min(Math.max(parseInt(limit || 5, 10), 1), 25);
+  if (!query || !String(query).trim()) {
+    return sbQuery("conversations", `select=*&order=src_updated_at.desc&limit=${lim}`);
+  }
+  const q = encodeURIComponent(String(query).trim());
+  const rows = await sbQuery(
+    "conversations",
+    `select=*&fts=plfts(simple).${q}&order=src_updated_at.desc&limit=${lim}`
+  );
+  if (rows.length) return rows;
+  // fall back to a loose match on title/summary/entities
+  const terms = String(query).toLowerCase().split(/\s+/).filter(t => t.length > 2).slice(0, 4);
+  if (!terms.length) return [];
+  const or = terms.map(t => `title.ilike.*${t}*,summary.ilike.*${t}*,entities.ilike.*${t}*`).join(",");
+  return sbQuery("conversations", `select=*&or=(${or})&limit=${lim}`);
+}
+
+// Compact renderings for injection into a system prompt — full detail is a
+// separate tool call away, so keep these short.
+function formatDocsBrief(rows) {
+  return rows.map(r => {
+    const bits = [`• ${r.record_id} — ${r.title || r.file_name || "(untitled)"}`];
+    const meta = [
+      DEPT_NAMES[r.department_id] || r.department_id,
+      r.subfolder, r.doc_type, r.doc_date,
+      r.counterparty, r.doc_no,
+      r.amount ? `${r.amount} ${r.currency || ""}`.trim() : null,
+      r.storage_path ? "file available" : "metadata only",
+    ].filter(Boolean).join(" | ");
+    if (meta) bits.push(`  ${meta}`);
+    if (r.summary) bits.push(`  ${String(r.summary).slice(0, 320)}`);
+    if (r.key_fields) bits.push(`  Key: ${String(r.key_fields).slice(0, 200)}`);
+    return bits.join("\n");
+  }).join("\n");
+}
+
+function formatConvsBrief(rows) {
+  return rows.map(c => {
+    const bits = [`• ${c.title || c.chat_id}${c.category ? ` [${c.category}]` : ""}`];
+    if (c.summary)    bits.push(`  ${String(c.summary).slice(0, 320)}`);
+    if (c.key_points) bits.push(`  Points: ${String(c.key_points).slice(0, 300)}`);
+    if (c.artifacts)  bits.push(`  Files discussed: ${String(c.artifacts).slice(0, 160)}`);
+    return bits.join("\n");
+  }).join("\n");
+}
+
 // Mint a time-limited download link for a stored document.
 async function signedUrl(storagePath, expiresIn = 3600) {
   const res = await fetch(
@@ -308,7 +356,7 @@ async function createMessage(params) {
 function createServer() {
   const server = new McpServer({
     name: "claude-assistant",
-    version: "5.0.0",
+    version: "5.2.0",
   });
 
   // ─── Tool 1: ask_claude (with department-aware context) ───────
@@ -323,8 +371,16 @@ function createServer() {
       context:    z.string().optional().describe("Optional additional context"),
     },
     async ({ prompt, department, context }) => {
-      const kbResults = await searchKnowledge(prompt, department, 4);
-      const peopleResults = await searchPeople(prompt);
+      // Pull from every source in parallel: the curated topics, the people
+      // directory, the document archive, and past conversations. Without the
+      // last two, Claude would answer from 33 summaries while 3,500+ indexed
+      // documents sat unused.
+      const [kbResults, peopleResults, docResults, convResults] = await Promise.all([
+        searchKnowledge(prompt, department, 4).catch(() => []),
+        searchPeople(prompt).catch(() => null),
+        searchRecords({ query: prompt, department, limit: 6 }).catch(() => []),
+        searchConversations(prompt, 3).catch(() => []),
+      ]);
 
       let systemMsg = PROFILE_CONTEXT;
       if (kbResults.length > 0) {
@@ -333,6 +389,16 @@ function createServer() {
       if (peopleResults) {
         systemMsg += `\n\nRELEVANT PEOPLE:\n${peopleResults}`;
       }
+      if (docResults.length > 0) {
+        systemMsg += `\n\nRELEVANT DOCUMENTS FROM THE ARCHIVE:\n${formatDocsBrief(docResults)}` +
+          `\n\n(To open any of these, use get_record for full detail or get_file_url for the file.)`;
+      }
+      if (convResults.length > 0) {
+        systemMsg += `\n\nRELEVANT PAST CONVERSATIONS:\n${formatConvsBrief(convResults)}`;
+      }
+      systemMsg += `\n\nGround your answer in the material above. If it does not contain ` +
+        `what is needed, say so rather than guessing — more can be retrieved with ` +
+        `search_records or search_conversations.`;
 
       const userMsg = context
         ? `Context:\n${context}\n\nTask:\n${prompt}`
@@ -728,7 +794,48 @@ ${peopleList}`;
     }
   );
 
-  // ─── Tool 13: enrich_pending ──────────────────────────────────
+  // ─── Tool 13: search_conversations ────────────────────────────
+  server.tool(
+    "search_conversations",
+    "Search past Claude conversations — what was discussed, decided and produced. " +
+    "Use this for questions about reasoning and history rather than paperwork: " +
+    "'what did we decide about X', 'what was agreed with Y', 'what did we conclude'. " +
+    "Documents live in search_records; this is the thinking behind them.",
+    {
+      query:    z.string().optional().describe("What to look for. Leave empty for the most recent conversations."),
+      category: z.string().optional().describe("Filter: 'business' or 'personal'"),
+      limit:    z.number().optional().describe("Max results, 1-25 (default 5)"),
+    },
+    async ({ query, category, limit }) => {
+      try {
+        let rows = await searchConversations(query, limit || 5);
+        if (category) {
+          rows = rows.filter(r => (r.category || "").toLowerCase() === category.toLowerCase());
+        }
+        if (!rows.length) {
+          return { content: [{ type: "text", text: `No conversations matched "${query || "(recent)"}".` }] };
+        }
+        const body = rows.map(c => {
+          const lines = [
+            `## ${c.title || c.chat_id}`,
+            `Category: ${c.category || "—"}${c.department_id ? ` | Department: ${DEPT_NAMES[c.department_id] || c.department_id}` : ""}` +
+              `${c.src_updated_at ? ` | Last active: ${String(c.src_updated_at).slice(0, 10)}` : ""}`,
+          ];
+          if (c.summary)       lines.push("", c.summary);
+          if (c.key_points)    lines.push("", `**Key points:** ${c.key_points}`);
+          if (c.entities)      lines.push(`**Mentioned:** ${c.entities}`);
+          if (c.artifacts)     lines.push(`**Files discussed:** ${c.artifacts}`);
+          if (c.url)           lines.push(`${c.url}`);
+          return lines.join("\n");
+        }).join("\n\n---\n\n");
+        return { content: [{ type: "text", text: `Found ${rows.length} conversation(s).\n\n${body}` }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Conversation search failed: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ─── Tool 14: enrich_pending ──────────────────────────────────
   server.tool(
     "enrich_pending",
     "Classify newly ingested documents. Finds records flagged needs_review, reads each file " +
@@ -900,13 +1007,13 @@ app.get("/", (_req, res) => {
   res.json({
     status: "ok",
     server: "claude-assistant",
-    version: "5.0.0",
+    version: "5.2.0",
     database: "supabase",
     model: RESOLVED_MODEL || "(not yet resolved)",
     models_available: AVAILABLE_MODELS.length || null,
     hierarchy: { ceo: "Spartan", assistant: "The Secretary" },
     departments: DEPT_IDS.map(id => ({ id, name: DEPARTMENTS[id]?.name })),
-    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments", "add_knowledge", "update_context", "search_records", "get_record", "get_file_url", "archive_stats", "enrich_pending"],
+    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments", "add_knowledge", "update_context", "search_records", "get_record", "get_file_url", "archive_stats", "search_conversations", "enrich_pending"],
     transport: "Streamable HTTP",
   });
 });
@@ -958,7 +1065,7 @@ async function start() {
     console.log("Loading knowledge base from Supabase...");
     await loadStaticData();
     app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Claude MCP Server v5.0.0 — Spartan Command (Supabase + Records)`);
+      console.log(`Claude MCP Server v5.2.0 — Spartan Command (Supabase + Records)`);
       console.log(`Database: ${SUPABASE_URL}`);
       console.log(`Departments: ${DEPT_IDS.length}`);
       console.log(`MCP endpoint: http://localhost:${PORT}/mcp`);
