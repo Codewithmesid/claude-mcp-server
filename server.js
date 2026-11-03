@@ -9,7 +9,17 @@ import { z } from "zod";
 const PORT          = parseInt(process.env.PORT || "3001", 10);
 const AUTH_TOKEN    = process.env.AUTH_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL         = process.env.CLAUDE_MODEL || "claude-sonnet-4-20250514";
+// Models get retired. Rather than pin one name and fail silently years later,
+// try a list and remember the first that works. CLAUDE_MODEL still wins if set.
+const MODEL_CANDIDATES = [
+  process.env.CLAUDE_MODEL,
+  "claude-sonnet-4-5",
+  "claude-sonnet-4-20250514",
+  "claude-3-7-sonnet-latest",
+  "claude-3-5-sonnet-latest",
+  "claude-3-5-haiku-latest",
+].filter(Boolean);
+let RESOLVED_MODEL = null;
 const SUPABASE_URL  = process.env.SUPABASE_URL;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY;
 
@@ -258,6 +268,30 @@ async function signedUrl(storagePath, expiresIn = 3600) {
 // ── Anthropic client ────────────────────────────────────────────
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
+// Try each candidate model until one is accepted, then stick with it.
+// A retired model returns 404 not_found_error; anything else is a real error.
+async function createMessage(params) {
+  const list = RESOLVED_MODEL ? [RESOLVED_MODEL] : MODEL_CANDIDATES;
+  const tried = [];
+  for (const m of list) {
+    try {
+      const res = await anthropic.messages.create({ ...params, model: m });
+      if (RESOLVED_MODEL !== m) {
+        RESOLVED_MODEL = m;
+        console.log(`Model resolved to: ${m}`);
+      }
+      return res;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const missing = e?.status === 404 || /not_found_error/i.test(msg);
+      tried.push(`${m} -> ${msg.slice(0, 120)}`);
+      if (!missing) throw e;          // real failure, not a retired model
+      if (RESOLVED_MODEL === m) RESOLVED_MODEL = null;  // it vanished; re-probe
+    }
+  }
+  throw new Error(`No usable Claude model. Tried: ${tried.join(" | ")}`);
+}
+
 // ── MCP server ──────────────────────────────────────────────────
 function createServer() {
   const server = new McpServer({
@@ -292,8 +326,7 @@ function createServer() {
         ? `Context:\n${context}\n\nTask:\n${prompt}`
         : prompt;
 
-      const res = await anthropic.messages.create({
-        model: MODEL,
+      const res = await createMessage({
         max_tokens: 8192,
         system: systemMsg,
         messages: [{ role: "user", content: userMsg }],
@@ -330,8 +363,7 @@ function createServer() {
         ? `Existing code:\n\`\`\`\n${existing_code}\n\`\`\`\n\nTask: ${task}`
         : task;
 
-      const res = await anthropic.messages.create({
-        model: MODEL,
+      const res = await createMessage({
         max_tokens: 16384,
         system: sys,
         messages: [{ role: "user", content: userMsg }],
@@ -363,8 +395,7 @@ function createServer() {
 
       const userMsg = `Review this ${language || ""} code:\n\`\`\`${language || ""}\n${code}\n\`\`\``;
 
-      const res = await anthropic.messages.create({
-        model: MODEL,
+      const res = await createMessage({
         max_tokens: 8192,
         system: sys,
         messages: [{ role: "user", content: userMsg }],
@@ -813,8 +844,7 @@ Rules:
 
   blocks.push({ type: "text", text: instruction });
 
-  const res = await anthropic.messages.create({
-    model: MODEL,
+  const res = await createMessage({
     max_tokens: 4096,
     messages: [{ role: "user", content: blocks }],
   });
