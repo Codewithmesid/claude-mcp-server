@@ -9,17 +9,11 @@ import { z } from "zod";
 const PORT          = parseInt(process.env.PORT || "3001", 10);
 const AUTH_TOKEN    = process.env.AUTH_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-// Models get retired. Rather than pin one name and fail silently years later,
-// try a list and remember the first that works. CLAUDE_MODEL still wins if set.
-const MODEL_CANDIDATES = [
-  process.env.CLAUDE_MODEL,
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-20250514",
-  "claude-3-7-sonnet-latest",
-  "claude-3-5-sonnet-latest",
-  "claude-3-5-haiku-latest",
-].filter(Boolean);
+// Model ids change over time. Ask the API which models this key can actually
+// use rather than pinning a name that quietly 404s years later.
+const MODEL_PREFERENCE = [/sonnet/i, /haiku/i, /opus/i];
 let RESOLVED_MODEL = null;
+let AVAILABLE_MODELS = [];
 const SUPABASE_URL  = process.env.SUPABASE_URL;
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY;
 
@@ -268,29 +262,47 @@ async function signedUrl(storagePath, expiresIn = 3600) {
 // ── Anthropic client ────────────────────────────────────────────
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
 
-// Try each candidate model until one is accepted, then stick with it.
-// A retired model returns 404 not_found_error; anything else is a real error.
-async function createMessage(params) {
-  const list = RESOLVED_MODEL ? [RESOLVED_MODEL] : MODEL_CANDIDATES;
-  const tried = [];
-  for (const m of list) {
-    try {
-      const res = await anthropic.messages.create({ ...params, model: m });
-      if (RESOLVED_MODEL !== m) {
-        RESOLVED_MODEL = m;
-        console.log(`Model resolved to: ${m}`);
-      }
-      return res;
-    } catch (e) {
-      const msg = String(e?.message || e);
-      const missing = e?.status === 404 || /not_found_error/i.test(msg);
-      tried.push(`${m} -> ${msg.slice(0, 120)}`);
-      if (!missing) throw e;          // real failure, not a retired model
-      if (RESOLVED_MODEL === m) RESOLVED_MODEL = null;  // it vanished; re-probe
-    }
-  }
-  throw new Error(`No usable Claude model. Tried: ${tried.join(" | ")}`);
+// Ask the API what exists, then pick by preference. Cached after the first call.
+async function listModels() {
+  const r = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+    headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+  });
+  if (!r.ok) throw new Error(`models list failed (${r.status}): ${(await r.text()).slice(0, 200)}`);
+  const body = await r.json();
+  return (body.data || []).map(m => m.id);
 }
+
+async function resolveModel(force = false) {
+  if (RESOLVED_MODEL && !force) return RESOLVED_MODEL;
+  if (process.env.CLAUDE_MODEL && !force) {
+    RESOLVED_MODEL = process.env.CLAUDE_MODEL;
+    return RESOLVED_MODEL;
+  }
+  AVAILABLE_MODELS = await listModels();
+  if (!AVAILABLE_MODELS.length) throw new Error("API returned no models for this key");
+  // the list comes back newest-first; take the first match by preference
+  for (const rx of MODEL_PREFERENCE) {
+    const hit = AVAILABLE_MODELS.find(id => rx.test(id));
+    if (hit) { RESOLVED_MODEL = hit; break; }
+  }
+  if (!RESOLVED_MODEL) RESOLVED_MODEL = AVAILABLE_MODELS[0];
+  console.log(`Model resolved to: ${RESOLVED_MODEL} (of ${AVAILABLE_MODELS.length} available)`);
+  return RESOLVED_MODEL;
+}
+
+async function createMessage(params) {
+  let model = await resolveModel();
+  try {
+    return await anthropic.messages.create({ ...params, model });
+  } catch (e) {
+    const missing = e?.status === 404 || /not_found_error/i.test(String(e?.message || e));
+    if (!missing) throw e;
+    // the chosen model vanished — re-discover once and retry
+    model = await resolveModel(true);
+    return await anthropic.messages.create({ ...params, model });
+  }
+}
+
 
 // ── MCP server ──────────────────────────────────────────────────
 function createServer() {
@@ -890,6 +902,8 @@ app.get("/", (_req, res) => {
     server: "claude-assistant",
     version: "5.0.0",
     database: "supabase",
+    model: RESOLVED_MODEL || "(not yet resolved)",
+    models_available: AVAILABLE_MODELS.length || null,
     hierarchy: { ceo: "Spartan", assistant: "The Secretary" },
     departments: DEPT_IDS.map(id => ({ id, name: DEPARTMENTS[id]?.name })),
     tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments", "add_knowledge", "update_context", "search_records", "get_record", "get_file_url", "archive_stats", "enrich_pending"],
