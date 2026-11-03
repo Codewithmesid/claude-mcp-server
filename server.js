@@ -685,7 +685,169 @@ ${peopleList}`;
     }
   );
 
+  // ─── Tool 13: enrich_pending ──────────────────────────────────
+  server.tool(
+    "enrich_pending",
+    "Classify newly ingested documents. Finds records flagged needs_review, reads each file " +
+    "out of Storage (PDFs and scans included), and fills in department, subfolder, document type, " +
+    "counterparty, date, amount, summary and key fields using the archive's existing taxonomy. " +
+    "Called automatically by the inbox ingest job; can also be run manually.",
+    {
+      limit: z.number().optional().describe("Max records to classify in one pass, 1-25 (default 10)"),
+    },
+    async ({ limit }) => {
+      const max = Math.min(Math.max(parseInt(limit || 10, 10), 1), 25);
+      try {
+        const pending = await sbQuery(
+          "records",
+          `needs_review=is.true&storage_path=not.is.null&select=record_id,file_name,original_filename,storage_path,file_size,source_note&order=ingested_at.asc&limit=${max}`
+        );
+        if (!pending.length) {
+          return { content: [{ type: "text", text: "Nothing pending — all ingested records are classified." }] };
+        }
+        const tax = await (await fetch(`${SB_REST}/rpc/taxonomy`, {
+          method: "POST", headers: SB_HEADERS, body: "{}",
+        })).json();
+
+        const done = [], failed = [];
+        for (const r of pending) {
+          try {
+            const result = await classifyOne(r, tax);
+            done.push(`${r.record_id} → ${result.department_id}/${result.subfolder} (${result.doc_type}, ${result.confidence})`);
+          } catch (e) {
+            failed.push(`${r.record_id}: ${e.message}`);
+            await sbPatch(r.record_id, { classify_error: String(e.message).slice(0, 400) });
+          }
+        }
+        const lines = [`Classified ${done.length} of ${pending.length} pending record(s).`];
+        if (done.length)   lines.push("", ...done);
+        if (failed.length) lines.push("", "FAILED:", ...failed);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `enrich_pending failed: ${err.message}` }] };
+      }
+    }
+  );
+
   return server;
+}
+
+// ── Classification helpers ──────────────────────────────────────
+async function sbPatch(recordId, fields) {
+  const res = await fetch(
+    `${SB_REST}/records?record_id=eq.${encodeURIComponent(recordId)}`,
+    { method: "PATCH", headers: { ...SB_HEADERS, Prefer: "return=minimal" }, body: JSON.stringify(fields) }
+  );
+  if (!res.ok) throw new Error(`patch ${recordId} failed (${res.status}): ${await res.text()}`);
+}
+
+const DOC_MIME = {
+  pdf: "application/pdf",
+};
+const IMG_MIME = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  gif: "image/gif", webp: "image/webp",
+};
+const TEXT_EXT = new Set(["txt", "md", "csv", "json", "xml", "html", "htm", "log", "eml"]);
+const MAX_BYTES = 20 * 1024 * 1024; // keep well inside the API's document limit
+
+async function classifyOne(rec, tax) {
+  // Pull the actual bytes back out of Storage.
+  const dl = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/records/${rec.storage_path.split("/").map(encodeURIComponent).join("/")}`,
+    { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+  );
+  if (!dl.ok) throw new Error(`download failed (${dl.status})`);
+  const buf = Buffer.from(await dl.arrayBuffer());
+
+  const name = rec.original_filename || rec.file_name || "";
+  const ext = (name.split(".").pop() || "").toLowerCase();
+
+  const blocks = [];
+  let readable = true;
+  if (buf.length > MAX_BYTES) {
+    readable = false;
+  } else if (DOC_MIME[ext]) {
+    blocks.push({ type: "document", source: { type: "base64", media_type: DOC_MIME[ext], data: buf.toString("base64") } });
+  } else if (IMG_MIME[ext]) {
+    blocks.push({ type: "image", source: { type: "base64", media_type: IMG_MIME[ext], data: buf.toString("base64") } });
+  } else if (TEXT_EXT.has(ext)) {
+    blocks.push({ type: "text", text: "FILE CONTENTS:\n" + buf.toString("utf-8").slice(0, 40000) });
+  } else {
+    readable = false;
+  }
+
+  const subfolderList = (tax.subfolders || [])
+    .map(s => `${s.dept}/${s.subfolder}`).join(", ");
+  const deptList = (tax.departments || [])
+    .map(d => `${d.id} — ${d.name}: ${d.scope}`).join("\n");
+
+  const instruction =
+`Classify this business document for the MetalMarket archive.
+
+Prefer the EXISTING taxonomy. Invent a new subfolder only when nothing fits; use lowercase-hyphenated slugs.
+
+DEPARTMENTS:
+${deptList}
+
+EXISTING SUBFOLDERS (department/subfolder):
+${subfolderList}
+
+EXISTING DOCUMENT TYPES: ${(tax.doc_types || []).join(", ")}
+
+KNOWN COUNTERPARTIES: ${(tax.counterparties || []).join(", ")}
+
+FILE NAME: ${name}
+${readable ? "" : "NOTE: the file could not be read (unsupported type or too large). Classify from the filename alone and set confidence to low."}
+
+Reply with ONLY a JSON object, no prose, no code fences:
+{"department_id":"...","subfolder":"...","title":"...","doc_type":"...","counterparty":null,"doc_no":null,"doc_date":null,"amount":null,"currency":null,"summary":"...","key_fields":"...","text_excerpt":"...","confidence":"high|medium|low"}
+
+Rules:
+- department_id MUST be one of the department ids listed above.
+- doc_date must be YYYY-MM-DD or null. amount must be a number or null.
+- summary: 2-3 factual sentences. Never invent facts not in the document.
+- key_fields: the important verbatim values — batch numbers, references, quantities, dates.
+- text_excerpt: up to 4000 characters of the document's actual text as you read it.
+- confidence: low if you are guessing from the filename.`;
+
+  blocks.push({ type: "text", text: instruction });
+
+  const res = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    messages: [{ role: "user", content: blocks }],
+  });
+  let raw = res.content.filter(b => b.type === "text").map(b => b.text).join("").trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("classifier returned no JSON");
+  const c = JSON.parse(m[0]);
+
+  const validDepts = new Set((tax.departments || []).map(d => d.id));
+  if (!validDepts.has(c.department_id)) {
+    throw new Error(`classifier chose unknown department "${c.department_id}"`);
+  }
+
+  const lowConf = String(c.confidence || "").toLowerCase() === "low";
+  await sbPatch(rec.record_id, {
+    department_id: c.department_id,
+    subfolder:     c.subfolder || "_general",
+    title:         c.title || name,
+    doc_type:      c.doc_type || null,
+    counterparty:  c.counterparty || null,
+    doc_no:        c.doc_no || null,
+    doc_date:      c.doc_date || null,
+    amount:        (typeof c.amount === "number" ? c.amount : null),
+    currency:      c.currency || null,
+    summary:       c.summary || null,
+    key_fields:    c.key_fields || null,
+    text_excerpt:  c.text_excerpt || null,
+    needs_review:  lowConf,            // low confidence stays flagged for a human
+    classify_error: null,
+    source_note:   `auto-classified (${c.confidence || "unknown"} confidence)`,
+  });
+  return c;
 }
 
 // ── Express app ─────────────────────────────────────────────────
@@ -700,7 +862,7 @@ app.get("/", (_req, res) => {
     database: "supabase",
     hierarchy: { ceo: "Spartan", assistant: "The Secretary" },
     departments: DEPT_IDS.map(id => ({ id, name: DEPARTMENTS[id]?.name })),
-    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments", "add_knowledge", "update_context", "search_records", "get_record", "get_file_url", "archive_stats"],
+    tools: ["ask_claude", "code_with_claude", "review_code", "search_knowledge", "get_profile", "list_departments", "add_knowledge", "update_context", "search_records", "get_record", "get_file_url", "archive_stats", "enrich_pending"],
     transport: "Streamable HTTP",
   });
 });
